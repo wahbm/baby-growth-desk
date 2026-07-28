@@ -23,6 +23,8 @@ export default function Home() {
   const [tab, setTab] = useState<"home" | "study" | "health" | "settings">("home");
   const [modal, setModal] = useState<Modal>(null);
   const [notice, setNotice] = useState("");
+  const dayCourses = useMemo(() => data.courses.filter((c) => c.day === new Date().getDay()), [data]);
+  const openTasks = useMemo(() => data.tasks.filter((t) => !t.done), [data]);
 
   useEffect(() => {
     const saved = localStorage.getItem(storageKey);
@@ -62,8 +64,6 @@ export default function Home() {
   if (loading) return <main className="auth-shell"><p>正在打开糖糖工作台…</p></main>;
   if (!login) return <AccountScreen onLogin={completeLogin} />;
 
-  const dayCourses = useMemo(() => data.courses.filter((c) => c.day === new Date().getDay()), [data]);
-  const openTasks = data.tasks.filter((t) => !t.done);
   return <main className="app-shell">
     <header className="topbar"><div className="avatar">糖</div><div><p className="eyebrow">文博文 · 一年级暑假 <span className="sync-status">● 已连接云端</span></p><h1>糖糖的小小工作台</h1></div><button className="round-btn" aria-label="进入设置" onClick={() => setTab("settings")}>···</button></header>
     {notice && <div className="toast">{notice}</div>}
