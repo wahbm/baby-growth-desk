@@ -45,7 +45,7 @@ alter table public.tt_health_records enable row level security;
 revoke all on all tables in schema public from anon, authenticated;
 
 create or replace function public.tt_session_info(p_token text)
-returns table(account_id uuid, family_id uuid) language plpgsql security definer set search_path = public as $$
+returns table(account_id uuid, family_id uuid) language plpgsql security definer set search_path = public, extensions as $$
 begin
   if p_token is null or length(p_token) < 32 then raise exception '登录已过期'; end if;
   delete from tt_sessions where expires_at < now();
@@ -56,7 +56,7 @@ end;
 $$;
 
 create or replace function public.tt_new_session(p_account_id uuid)
-returns text language plpgsql security definer set search_path = public as $$
+returns text language plpgsql security definer set search_path = public, extensions as $$
 declare token text;
 begin
   token := encode(gen_random_bytes(32), 'hex');
@@ -66,7 +66,7 @@ end;
 $$;
 
 create or replace function public.tt_create_account(p_username text, p_password text, p_family_name text default '糖糖家')
-returns jsonb language plpgsql security definer set search_path = public as $$
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare family uuid; account uuid; uname text; token text;
 begin
   uname := lower(trim(p_username));
@@ -81,7 +81,7 @@ end;
 $$;
 
 create or replace function public.tt_login(p_username text, p_password text)
-returns jsonb language plpgsql security definer set search_path = public as $$
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare account tt_accounts%rowtype; token text;
 begin
   select * into account from tt_accounts where username = lower(trim(p_username));
@@ -92,7 +92,7 @@ end;
 $$;
 
 create or replace function public.tt_get_data(p_token text)
-returns jsonb language plpgsql security definer set search_path = public as $$
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare f uuid;
 begin
   select family_id into f from tt_session_info(p_token);
@@ -105,15 +105,15 @@ end;
 $$;
 
 create or replace function public.tt_add_course(p_token text, p_title text, p_category text, p_day integer, p_time text, p_homework text default '')
-returns void language plpgsql security definer set search_path = public as $$ declare f uuid; begin select family_id into f from tt_session_info(p_token); insert into tt_courses(family_id,title,category,day,time,homework) values(f,p_title,p_category,p_day,p_time,coalesce(p_homework,'')); end; $$;
+returns void language plpgsql security definer set search_path = public, extensions as $$ declare f uuid; begin select family_id into f from tt_session_info(p_token); insert into tt_courses(family_id,title,category,day,time,homework) values(f,p_title,p_category,p_day,p_time,coalesce(p_homework,'')); end; $$;
 create or replace function public.tt_add_task(p_token text, p_title text, p_subject text, p_due date)
-returns void language plpgsql security definer set search_path = public as $$ declare f uuid; begin select family_id into f from tt_session_info(p_token); insert into tt_tasks(family_id,title,subject,due) values(f,p_title,coalesce(nullif(p_subject,''),'作业'),p_due); end; $$;
+returns void language plpgsql security definer set search_path = public, extensions as $$ declare f uuid; begin select family_id into f from tt_session_info(p_token); insert into tt_tasks(family_id,title,subject,due) values(f,p_title,coalesce(nullif(p_subject,''),'作业'),p_due); end; $$;
 create or replace function public.tt_add_health(p_token text, p_illness text, p_hospital text, p_date date, p_plan text, p_follow_up date, p_effect text)
-returns void language plpgsql security definer set search_path = public as $$ declare f uuid; begin select family_id into f from tt_session_info(p_token); insert into tt_health_records(family_id,illness,hospital,date,plan,follow_up,effect) values(f,p_illness,coalesce(p_hospital,''),p_date,coalesce(p_plan,''),p_follow_up,coalesce(p_effect,'')); end; $$;
+returns void language plpgsql security definer set search_path = public, extensions as $$ declare f uuid; begin select family_id into f from tt_session_info(p_token); insert into tt_health_records(family_id,illness,hospital,date,plan,follow_up,effect) values(f,p_illness,coalesce(p_hospital,''),p_date,coalesce(p_plan,''),p_follow_up,coalesce(p_effect,'')); end; $$;
 
 create or replace function public.tt_toggle_task(p_token text, p_id uuid)
-returns void language plpgsql security definer set search_path = public as $$ declare f uuid; begin select family_id into f from tt_session_info(p_token); update tt_tasks set done = not done where id=p_id and family_id=f; end; $$;
+returns void language plpgsql security definer set search_path = public, extensions as $$ declare f uuid; begin select family_id into f from tt_session_info(p_token); update tt_tasks set done = not done where id=p_id and family_id=f; end; $$;
 create or replace function public.tt_toggle_course(p_token text, p_id uuid)
-returns void language plpgsql security definer set search_path = public as $$ declare f uuid; begin select family_id into f from tt_session_info(p_token); update tt_courses set done = not done where id=p_id and family_id=f; end; $$;
+returns void language plpgsql security definer set search_path = public, extensions as $$ declare f uuid; begin select family_id into f from tt_session_info(p_token); update tt_courses set done = not done where id=p_id and family_id=f; end; $$;
 
 grant execute on function public.tt_create_account(text,text,text), public.tt_login(text,text), public.tt_get_data(text), public.tt_add_course(text,text,text,integer,text,text), public.tt_add_task(text,text,text,date), public.tt_add_health(text,text,text,date,text,date,text), public.tt_toggle_task(text,uuid), public.tt_toggle_course(text,uuid) to anon, authenticated;
