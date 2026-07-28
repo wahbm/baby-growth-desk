@@ -1,0 +1,10 @@
+{
+  "name": "糖糖的小小工作台",
+  "short_name": "糖糖工作台",
+  "description": "学习、健康与快乐成长的家庭记录本",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fffaf5",
+  "theme_color": "#ef8268",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
