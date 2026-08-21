@@ -115,6 +115,13 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      setNotice("离线功能暂未启用，请保持网络后重新打开一次。");
+    });
+  }, []);
+
+  useEffect(() => {
     if (!ready) return;
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -384,7 +391,7 @@ function Settings({ data, onImport, onClear, onClose }: { data: DeskData; onImpo
   };
   return (
     <Sheet title="本机数据与备份" onClose={onClose}>
-      <section className="local-note"><span>⌁</span><div><b>无需登录，只保存在当前设备</b><p>记录不会自动上传。清理 Safari 网站数据或更换手机前，请先导出备份。</p></div></section>
+      <section className="local-note"><span>⌁</span><div><b>无需登录，可安装后离线使用</b><p>记录只保存在当前设备。首次联网打开后，在 Safari 中选择“添加到主屏幕”，以后换网络或没有网络也能打开；清理网站数据或更换手机前，请先导出备份。</p></div></section>
       <div className="settings-list">
         <button type="button" onClick={exportData}><span>⇩</span><div><b>导出备份</b><small>{data.study.length} 条学习记录 · {data.health.length} 条健康记录</small></div><i>›</i></button>
         <button type="button" onClick={() => inputRef.current?.click()}><span>⇧</span><div><b>导入备份</b><small>从之前导出的 JSON 文件恢复</small></div><i>›</i></button>

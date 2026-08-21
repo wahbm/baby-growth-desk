@@ -29,9 +29,10 @@ test("server-renders the personalized local workbench", async () => {
 });
 
 test("uses local-only storage and ships the generated avatar", async () => {
-  const [page, layout] = await Promise.all([
+  const [page, layout, serviceWorker] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
     access(new URL("public/tangtang-avatar.png", root)),
   ]);
 
@@ -40,5 +41,8 @@ test("uses local-only storage and ships the generated avatar", async () => {
   assert.match(page, /导出备份/);
   assert.match(page, /导入备份/);
   assert.doesNotMatch(page, /supabase|tt_login|家庭账号/);
+  assert.match(page, /serviceWorker\.register\("\/sw\.js"\)/);
+  assert.match(serviceWorker, /CACHE_NAME/);
+  assert.match(serviceWorker, /request\.mode === "navigate"/);
   assert.match(layout, /tangtang-avatar\.png/);
 });
