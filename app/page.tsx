@@ -218,7 +218,7 @@ export default function Home() {
         <img src="/tangtang-avatar.png" alt="糖糖的插画头像" />
         <div>
           <p>文博文 · 糖糖</p>
-          <h1>一年级暑假成长记录</h1>
+          <h1>成长记录</h1>
         </div>
         <button type="button" className="icon-button" aria-label="打开设置" onClick={() => setSettingsOpen(true)}>⚙</button>
       </header>
