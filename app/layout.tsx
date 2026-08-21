@@ -1,20 +1,23 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: "糖糖的小小工作台",
-  description: "记录糖糖的学习计划与健康情况。",
-  metadataBase: new URL("https://tangtang-study-health-desk.anhuibengbuhy.chatgpt.site"),
-  openGraph: {
-    title: "糖糖的小小工作台",
-    description: "记录糖糖的学习计划与健康情况。",
-    images: ["/og.png"],
-  },
-  twitter: { card: "summary_large_image", images: ["/og.png"] },
-  manifest: "/manifest.webmanifest",
-  icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const incoming = await headers();
+  const host = incoming.get("x-forwarded-host") || incoming.get("host") || "localhost:3000";
+  const protocol = incoming.get("x-forwarded-proto") || (host.startsWith("localhost") ? "http" : "https");
+  const metadataBase = new URL(`${protocol}://${host}`);
+  return {
+    metadataBase,
+    title: "糖糖成长工作台",
+    description: "在本机记录糖糖的学习安排、作业和健康情况。",
+    manifest: "/manifest.webmanifest",
+    icons: { icon: "/tangtang-avatar.png", apple: "/tangtang-avatar.png" },
+    openGraph: { title: "糖糖成长工作台", description: "学习有计划，健康有记录。数据只保存在当前设备。", images: [{ url: "/og.png", width: 1696, height: 932 }] },
+    twitter: { card: "summary_large_image", title: "糖糖成长工作台", description: "学习有计划，健康有记录。", images: ["/og.png"] },
+  };
+}
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="zh-CN"><head><meta name="theme-color" content="#ef8268" /></head><body>{children}</body></html>;
+  return <html lang="zh-CN"><head><meta name="theme-color" content="#dc7650" /><meta name="apple-mobile-web-app-capable" content="yes" /><meta name="apple-mobile-web-app-status-bar-style" content="default" /></head><body>{children}</body></html>;
 }
