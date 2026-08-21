@@ -90,20 +90,35 @@ jobs:
             rm -f /tmp/baby-growth-desk-nginx.txt
           else
             echo 'nginx_config_readable=no'
+            shopt -s nullglob
+            for file in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+              if [[ -r "$file" ]]; then
+                echo "# readable nginx file: $file"
+                grep -E '^[[:space:]]*(listen|server_name|location|alias|root|proxy_pass)[[:space:]]' "$file" || true
+              fi
+            done
           fi
 
           echo '[candidate project directories]'
           for root in /srv /var/www /opt; do
             if [[ -d "$root" ]]; then
-              find "$root" -maxdepth 3 -mindepth 1 -type d -printf '%p\n' 2>/dev/null | sort
+              find "$root" -maxdepth 3 -mindepth 1 -type d -printf '%p\n' 2>/dev/null | sort || true
             fi
           done
 
           echo '[desired identifiers]'
-          if [[ -e /srv/www/baby-growth-desk ]]; then
-            stat -c '%A %U:%G %n' /srv/www/baby-growth-desk
+          for path in /var/www /var/www/liangliang-developer; do
+            if [[ -e "$path" ]]; then
+              stat -c '%A %U:%G %n' "$path"
+              if [[ -w "$path" ]]; then echo "$path=writable"; else echo "$path=not-writable"; fi
+            else
+              echo "$path=missing"
+            fi
+          done
+          if [[ -e /var/www/liangliang-developer/baby-growth-desk ]]; then
+            stat -c '%A %U:%G %n' /var/www/liangliang-developer/baby-growth-desk
           else
-            echo '/srv/www/baby-growth-desk=available'
+            echo '/var/www/liangliang-developer/baby-growth-desk=available'
           fi
           if systemctl cat baby-growth-desk.service >/dev/null 2>&1; then
             echo 'baby-growth-desk.service=occupied'
