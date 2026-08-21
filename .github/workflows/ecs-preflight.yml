@@ -1,0 +1,124 @@
+name: ECS preflight (read only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ecs-preflight-baby-growth-desk
+  cancel-in-progress: true
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+    steps:
+      - name: Validate shared deployment contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for name in DEPLOY_HOST DEPLOY_PORT DEPLOY_USER DEPLOY_KNOWN_HOSTS SSH_PRIVATE_KEY; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Required deployment value is unavailable: ${name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/known_hosts" "$HOME/.ssh/deploy_key"
+
+      - name: Inspect ECS without changing it
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh \
+            -i "$HOME/.ssh/deploy_key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -p "$DEPLOY_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" 'bash -se' <<'REMOTE'
+          set -Eeuo pipefail
+
+          echo '[identity]'
+          id
+          if sudo -n true 2>/dev/null; then
+            echo 'sudo_noninteractive=yes'
+          else
+            echo 'sudo_noninteractive=no'
+          fi
+
+          echo '[os and runtime]'
+          . /etc/os-release
+          printf 'os=%s\n' "$PRETTY_NAME"
+          printf 'arch=%s\n' "$(uname -m)"
+          if command -v node >/dev/null 2>&1; then node --version; else echo 'node=missing'; fi
+          if command -v nginx >/dev/null 2>&1; then nginx -v 2>&1; else echo 'nginx=missing'; fi
+
+          echo '[memory and disk]'
+          free -m
+          swapon --show || true
+          df -h /
+
+          echo '[listening tcp ports]'
+          ss -ltnH || true
+
+          echo '[relevant running services]'
+          systemctl list-units --type=service --state=running --no-legend --no-pager \
+            | grep -Ei 'nginx|node|docker|maria|mysql|redis|baby|fate|shop|todo|upload' || true
+
+          echo '[nginx routes]'
+          if sudo -n nginx -T >/tmp/baby-growth-desk-nginx.txt 2>/dev/null; then
+            grep -E '^# configuration file|^[[:space:]]*(listen|server_name|location|alias|root|proxy_pass)[[:space:]]' \
+              /tmp/baby-growth-desk-nginx.txt || true
+            rm -f /tmp/baby-growth-desk-nginx.txt
+          else
+            echo 'nginx_config_readable=no'
+          fi
+
+          echo '[candidate project directories]'
+          for root in /srv /var/www /opt; do
+            if [[ -d "$root" ]]; then
+              find "$root" -maxdepth 3 -mindepth 1 -type d -printf '%p\n' 2>/dev/null | sort
+            fi
+          done
+
+          echo '[desired identifiers]'
+          if [[ -e /srv/www/baby-growth-desk ]]; then
+            stat -c '%A %U:%G %n' /srv/www/baby-growth-desk
+          else
+            echo '/srv/www/baby-growth-desk=available'
+          fi
+          if systemctl cat baby-growth-desk.service >/dev/null 2>&1; then
+            echo 'baby-growth-desk.service=occupied'
+          else
+            echo 'baby-growth-desk.service=available'
+          fi
+          REMOTE
+
+      - name: Check public HTTP entrypoint
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl --fail --silent --show-error --head --max-time 15 "http://$DEPLOY_HOST/" | head -n 10
+
+      - name: Remove temporary key
+        if: always()
+        shell: bash
+        run: rm -f "$HOME/.ssh/deploy_key"
