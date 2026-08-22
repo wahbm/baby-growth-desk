@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { basePath, withBasePath } from "./lib/base-path";
 
 type Section = "study" | "health";
 type StudyCategory = "学校课程" | "课外辅导" | "兴趣班";
@@ -116,7 +117,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.register("/sw.js").catch(() => {
+    navigator.serviceWorker.register(withBasePath("/sw.js"), { scope: `${basePath || ""}/` }).catch(() => {
       setNotice("离线功能暂未启用，请保持网络后重新打开一次。");
     });
   }, []);
@@ -222,7 +223,7 @@ export default function Home() {
   return (
     <main className="app-shell">
       <header className="profile-bar">
-        <img src="/tangtang-avatar.png" alt="糖糖的插画头像" />
+        <img src={withBasePath("/tangtang-avatar.png")} alt="糖糖的插画头像" />
         <div>
           <p>文博文 · 糖糖</p>
           <h1>成长记录</h1>
