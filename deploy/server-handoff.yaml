@@ -32,7 +32,7 @@ deployment_handoff:
     - "Validate deploy/sudoers/baby-growth-desk-deploy with visudo, then install it as /etc/sudoers.d/baby-growth-desk-deploy with mode 0440."
     - "Install deploy/nginx/baby-growth-desk-location.conf as /etc/nginx/snippets/baby-growth-desk-location.conf and add one exact include inside the existing HTTP server block for 8.130.116.192."
     - "Run nginx -t immediately before reload; reload only on success. Preserve every unrelated route and service."
-    - "Run the Deploy ECS workflow only after the directory, systemd unit, narrow sudo rule, and Nginx include are ready."
+    - "Set repository variable DEPLOY_ENABLED to true only after the directory, systemd unit, narrow sudo rule, and Nginx include are ready, then run the Deploy ECS workflow."
   verification:
     - "Confirm the workflow commit matches main and that PR events build without deploying."
     - "Confirm baby-growth-desk.service is active and bound only to 127.0.0.1:3101."
