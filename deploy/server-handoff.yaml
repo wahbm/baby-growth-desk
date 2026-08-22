@@ -1,0 +1,45 @@
+deployment_handoff:
+  status: requires_authorized_server_configuration
+  repository: "wahbm/baby-growth-desk"
+  deployment_branch: "main"
+  workflow_file: ".github/workflows/deploy-ecs.yml"
+  public_url: "http://8.130.116.192/liangliang-developer/baby-growth-desk/"
+  ecs_target:
+    public_ip_or_domain: "8.130.116.192"
+    access_required: "Alibaba Cloud Workbench or SSH with sudo"
+  current_state:
+    github_actions: "configured after deployment PR merge"
+    nginx: "installed; exact project include still required"
+    mariadb: "not_needed"
+    resource_check: "Ubuntu 24.04; Node 22; Nginx 1.24; about 970 MiB available RAM, 4 GiB swap, and 29 GiB free disk"
+  deployment:
+    deploy_path: "/var/www/liangliang-developer/baby-growth-desk"
+    release_strategy: "atomic_current_symlink"
+    rollback: "automatic local-health rollback to the previous known-good release"
+    persistent_data: "none; user records remain in browser localStorage"
+    runtime_model: "systemd"
+    service_listen: "127.0.0.1:3101"
+    expected_resources: "about 75 MiB resident memory; about 33 MiB per unpacked release; retain current plus one known-good release"
+    database:
+      engine: "none"
+      database_name: "none"
+      network: "not applicable"
+      migration_safety: "not applicable"
+  required_actions:
+    - "Create /var/www/liangliang-developer/baby-growth-desk/{incoming,releases} owned by deploy:deploy; keep the project root owned by deploy:deploy."
+    - "Install deploy/baby-growth-desk.env.example as /etc/baby-growth-desk.env owned by root:root with mode 0644."
+    - "Install deploy/systemd/baby-growth-desk.service as /etc/systemd/system/baby-growth-desk.service, run systemctl daemon-reload, and enable it without starting it before the first release."
+    - "Validate deploy/sudoers/baby-growth-desk-deploy with visudo, then install it as /etc/sudoers.d/baby-growth-desk-deploy with mode 0440."
+    - "Install deploy/nginx/baby-growth-desk-location.conf as /etc/nginx/snippets/baby-growth-desk-location.conf and add one exact include inside the existing HTTP server block for 8.130.116.192."
+    - "Run nginx -t immediately before reload; reload only on success. Preserve every unrelated route and service."
+    - "Run the Deploy ECS workflow only after the directory, systemd unit, narrow sudo rule, and Nginx include are ready."
+  verification:
+    - "Confirm the workflow commit matches main and that PR events build without deploying."
+    - "Confirm baby-growth-desk.service is active and bound only to 127.0.0.1:3101."
+    - "Confirm the exact public URL returns 200 and its avatar, manifest, service worker, and JS/CSS assets also return 200."
+    - "Confirm current points into releases, known-good-release records the rollback target after the second successful release, and only two releases remain."
+    - "Recheck RAM, swap, disk, Nginx, and browser console after deployment."
+  prohibitions:
+    - "Do not overwrite another project, expose port 3101 or MariaDB publicly, install dependencies on ECS, change the CloudBase root proxy, or delete persistent data."
+  report_back:
+    - "Completed and skipped actions, workflow run URL and commit, release and rollback state, public URL, resource headroom, and remaining domain/HTTPS work."

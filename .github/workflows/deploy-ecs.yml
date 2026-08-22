@@ -1,0 +1,265 @@
+name: Deploy ECS
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-ecs-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_BASE_PATH: /liangliang-developer/baby-growth-desk
+  APP_PORT: "3101"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Test and build standalone runtime
+        env:
+          NEXT_PUBLIC_BASE_PATH: ${{ env.APP_BASE_PATH }}
+        run: npm test
+
+      - name: Validate production bundle
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -s dist/standalone/server.js
+          test -s dist/standalone/dist/server/index.js
+          test -d dist/standalone/dist/client
+          test -d dist/standalone/node_modules/vinext
+
+      - name: Package production bundle
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          tar -C dist/standalone -czf "$RUNNER_TEMP/baby-growth-desk-release.tgz" .
+
+      - name: Upload production bundle
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: baby-growth-desk-release
+          path: ${{ runner.temp }}/baby-growth-desk-release.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+    steps:
+      - name: Download production bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: baby-growth-desk-release
+          path: ${{ runner.temp }}/release
+
+      - name: Validate deployment contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for name in DEPLOY_HOST DEPLOY_PORT DEPLOY_USER DEPLOY_KNOWN_HOSTS DEPLOY_PATH SSH_PRIVATE_KEY; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Required deployment value is unavailable: ${name}" >&2
+              exit 1
+            fi
+          done
+          if [[ ! "$DEPLOY_PATH" =~ ^/var/www/[A-Za-z0-9._/-]+$ ]] || [[ "$DEPLOY_PATH" == *".."* ]]; then
+            echo "DEPLOY_PATH is outside the approved project directory shape" >&2
+            exit 1
+          fi
+          test -s "$RUNNER_TEMP/release/baby-growth-desk-release.tgz"
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/known_hosts" "$HOME/.ssh/deploy_key"
+
+      - name: Upload immutable release
+        id: release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          ssh \
+            -i "$HOME/.ssh/deploy_key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -p "$DEPLOY_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            bash -se -- "$DEPLOY_PATH" <<'REMOTE'
+          set -Eeuo pipefail
+          deploy_path=$1
+          test -d "$deploy_path/incoming"
+          test -d "$deploy_path/releases"
+          test -w "$deploy_path/incoming"
+          test -w "$deploy_path/releases"
+          REMOTE
+          scp \
+            -i "$HOME/.ssh/deploy_key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -P "$DEPLOY_PORT" \
+            "$RUNNER_TEMP/release/baby-growth-desk-release.tgz" \
+            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/incoming/$release_id.tgz"
+
+      - name: Publish, restart, and verify locally
+        shell: bash
+        env:
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          set -Eeuo pipefail
+          ssh \
+            -i "$HOME/.ssh/deploy_key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -p "$DEPLOY_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            bash -se -- "$DEPLOY_PATH" "$RELEASE_ID" "$APP_PORT" "$APP_BASE_PATH" <<'REMOTE'
+          set -Eeuo pipefail
+          deploy_path=$1
+          release_id=$2
+          app_port=$3
+          app_base_path=$4
+          archive="$deploy_path/incoming/$release_id.tgz"
+          release="$deploy_path/releases/$release_id"
+          current_link="$deploy_path/current"
+          next_link="$deploy_path/current.next"
+          previous=""
+
+          case "$release" in
+            "$deploy_path/releases/"*) ;;
+            *) echo 'Release path escaped the project root' >&2; exit 1 ;;
+          esac
+          test -s "$archive"
+          if tar -tzf "$archive" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+            echo 'Release archive contains an unsafe path' >&2
+            exit 1
+          fi
+          if [[ -e "$release" ]]; then
+            echo 'Release directory already exists' >&2
+            exit 1
+          fi
+
+          install -d -m 755 "$release"
+          tar -xzf "$archive" -C "$release"
+          test -s "$release/server.js"
+          test -s "$release/dist/server/index.js"
+          test -d "$release/dist/client"
+          test -d "$release/node_modules/vinext"
+          node --check "$release/server.js"
+
+          if [[ -L "$current_link" ]]; then
+            previous=$(readlink -f "$current_link")
+            case "$previous" in
+              "$deploy_path/releases/"*) test -d "$previous" ;;
+              *) echo 'Current release points outside the project root' >&2; exit 1 ;;
+            esac
+          elif [[ -e "$current_link" ]]; then
+            echo 'Current path exists but is not a symlink' >&2
+            exit 1
+          fi
+
+          if [[ -e "$next_link" || -L "$next_link" ]]; then
+            test -L "$next_link"
+            rm -- "$next_link"
+          fi
+          ln -s "$release" "$next_link"
+          mv -Tf "$next_link" "$current_link"
+
+          rollback() {
+            if [[ -n "$previous" && -d "$previous" ]]; then
+              ln -sfn "$previous" "$next_link"
+              mv -Tf "$next_link" "$current_link"
+              sudo -n /usr/bin/systemctl restart baby-growth-desk.service
+              echo "Rolled back to $(basename "$previous")" >&2
+            else
+              echo 'No recorded previous release is available for rollback' >&2
+            fi
+          }
+
+          if ! sudo -n /usr/bin/systemctl restart baby-growth-desk.service; then
+            rollback
+            exit 1
+          fi
+          if ! systemctl is-active --quiet baby-growth-desk.service; then
+            rollback
+            exit 1
+          fi
+          if ! curl --fail --silent --show-error --max-time 20 \
+            "http://127.0.0.1:${app_port}${app_base_path}/" | grep -q '糖糖成长工作台'; then
+            rollback
+            exit 1
+          fi
+
+          if [[ -n "$previous" ]]; then
+            printf '%s\n' "$previous" > "$deploy_path/known-good-release"
+          else
+            : > "$deploy_path/known-good-release"
+          fi
+          rm -- "$archive"
+
+          current=$(readlink -f "$current_link")
+          while IFS= read -r -d '' candidate; do
+            if [[ "$candidate" != "$current" && "$candidate" != "$previous" ]]; then
+              case "$candidate" in
+                "$deploy_path/releases/"*) rm -rf -- "$candidate" ;;
+                *) echo 'Refusing to remove a path outside releases' >&2; exit 1 ;;
+              esac
+            fi
+          done < <(find "$deploy_path/releases" -mindepth 1 -maxdepth 1 -type d -print0)
+          REMOTE
+
+      - name: Verify public route
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl --fail --silent --show-error --max-time 20 \
+            "http://$DEPLOY_HOST$APP_BASE_PATH/" | grep -q '糖糖成长工作台'
+
+      - name: Remove temporary key
+        if: always()
+        shell: bash
+        run: rm -f "$HOME/.ssh/deploy_key"

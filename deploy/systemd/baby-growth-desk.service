@@ -1,0 +1,26 @@
+[Unit]
+Description=Baby Growth Desk Vinext service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+EnvironmentFile=/etc/baby-growth-desk.env
+WorkingDirectory=/var/www/liangliang-developer/baby-growth-desk/current
+ExecStart=/usr/bin/node /var/www/liangliang-developer/baby-growth-desk/current/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+MemoryHigh=192M
+MemoryMax=256M
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

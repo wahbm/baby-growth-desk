@@ -1,21 +1,23 @@
 const CACHE_PREFIX = "tangtang-workbench-";
-const CACHE_NAME = CACHE_PREFIX + "v8";
-const CORE_URLS = ["/", "/manifest.webmanifest", "/tangtang-avatar.png"];
+const CACHE_NAME = CACHE_PREFIX + "v9";
+const ROOT_URL = self.registration.scope;
+const scopedUrl = (path) => new URL(path.replace(/^\/+/, ""), ROOT_URL).href;
+const CORE_URLS = [ROOT_URL, scopedUrl("manifest.webmanifest"), scopedUrl("tangtang-avatar.png")];
 
 async function cacheFirstVisit() {
   const cache = await caches.open(CACHE_NAME);
-  const rootResponse = await fetch(new Request("/", { cache: "reload" }));
+  const rootResponse = await fetch(new Request(ROOT_URL, { cache: "reload" }));
   if (!rootResponse.ok) throw new Error("首页暂时不可用");
-  await cache.put("/", rootResponse.clone());
+  await cache.put(ROOT_URL, rootResponse.clone());
 
   const html = await rootResponse.text();
   const discovered = new Set(CORE_URLS.slice(1));
   const matcher = /(?:src|href)=["']([^"']+)["']/g;
   let match;
   while ((match = matcher.exec(html))) {
-    const url = new URL(match[1], self.location.origin);
-    if (url.origin === self.location.origin && url.pathname !== "/og.png") {
-      discovered.add(url.pathname + url.search);
+    const url = new URL(match[1], ROOT_URL);
+    if (url.origin === self.location.origin && url.href !== scopedUrl("og.png")) {
+      discovered.add(url.href);
     }
   }
 
@@ -51,10 +53,10 @@ self.addEventListener("fetch", (event) => {
     event.respondWith((async () => {
       try {
         const response = await fetch(request);
-        if (response.ok) (await caches.open(CACHE_NAME)).put("/", response.clone());
+        if (response.ok) (await caches.open(CACHE_NAME)).put(ROOT_URL, response.clone());
         return response;
       } catch {
-        return (await caches.match("/")) || Response.error();
+        return (await caches.match(ROOT_URL)) || Response.error();
       }
     })());
     return;

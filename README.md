@@ -92,6 +92,22 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 - `npm test`: build the starter and verify its rendered loading skeleton
 - `npm run db:generate`: generate Drizzle migrations after schema changes
 
+## Alibaba Cloud ECS deployment
+
+Production uses the Vinext standalone runtime behind host Nginx. GitHub Actions
+builds the complete runtime bundle; the ECS only receives immutable releases
+and does not install dependencies or build source code.
+
+- Public path: `/liangliang-developer/baby-growth-desk/`
+- Local service: `127.0.0.1:3101`
+- Release root: `/var/www/liangliang-developer/baby-growth-desk`
+- Service: `baby-growth-desk.service`
+- Workflow: `.github/workflows/deploy-ecs.yml`
+
+The server bootstrap templates are under `deploy/`. Keep the service bound to
+localhost and include only the project-specific Nginx location in the existing
+shared server block.
+
 ## Learn More
 
 - [vinext Documentation](https://github.com/cloudflare/vinext)
