@@ -167,7 +167,37 @@ jobs:
           release="$deploy_path/releases/$release_id"
           current_link="$deploy_path/current"
           next_link="$deploy_path/current.next"
-          previous=""
+          known_good_file="$deploy_path/known-good-release"
+          current_before=""
+          rollback_target=""
+
+          check_app() {
+            local response
+            systemctl is-active --quiet baby-growth-desk.service || return 1
+            response=$(curl --fail --silent --max-time 5 \
+              "http://127.0.0.1:${app_port}${app_base_path}/" 2>/dev/null) || return 1
+            grep -q '糖糖成长工作台' <<< "$response"
+          }
+
+          wait_for_app() {
+            local attempt
+            for attempt in $(seq 1 30); do
+              if check_app; then
+                return 0
+              fi
+              sleep 1
+            done
+            return 1
+          }
+
+          show_diagnostics() {
+            echo 'ECS service diagnostics:' >&2
+            systemctl status baby-growth-desk.service --no-pager >&2 || true
+            journalctl -u baby-growth-desk.service -n 80 --no-pager >&2 || true
+            ss -ltn >&2 || true
+            curl --verbose --max-time 5 \
+              "http://127.0.0.1:${app_port}${app_base_path}/" >&2 || true
+          }
 
           case "$release" in
             "$deploy_path/releases/"*) ;;
@@ -192,14 +222,25 @@ jobs:
           node --check "$release/server.js"
 
           if [[ -L "$current_link" ]]; then
-            previous=$(readlink -f "$current_link")
-            case "$previous" in
-              "$deploy_path/releases/"*) test -d "$previous" ;;
+            current_before=$(readlink -f "$current_link")
+            case "$current_before" in
+              "$deploy_path/releases/"*) test -d "$current_before" ;;
               *) echo 'Current release points outside the project root' >&2; exit 1 ;;
             esac
           elif [[ -e "$current_link" ]]; then
             echo 'Current path exists but is not a symlink' >&2
             exit 1
+          fi
+
+          if [[ -s "$known_good_file" ]]; then
+            IFS= read -r rollback_target < "$known_good_file"
+            case "$rollback_target" in
+              "$deploy_path/releases/"*) test -d "$rollback_target" ;;
+              *) echo 'Recorded known-good release is invalid' >&2; exit 1 ;;
+            esac
+          fi
+          if [[ -n "$current_before" ]] && check_app; then
+            rollback_target=$current_before
           fi
 
           if [[ -e "$next_link" || -L "$next_link" ]]; then
@@ -210,40 +251,41 @@ jobs:
           mv -Tf "$next_link" "$current_link"
 
           rollback() {
-            if [[ -n "$previous" && -d "$previous" ]]; then
-              ln -sfn "$previous" "$next_link"
+            if [[ -n "$rollback_target" && -d "$rollback_target" ]]; then
+              ln -sfn "$rollback_target" "$next_link"
               mv -Tf "$next_link" "$current_link"
-              sudo -n /usr/bin/systemctl restart baby-growth-desk.service
-              echo "Rolled back to $(basename "$previous")" >&2
+              if sudo -n /usr/bin/systemctl restart baby-growth-desk.service && wait_for_app; then
+                echo "Rolled back to verified release $(basename "$rollback_target")" >&2
+              else
+                echo 'The verified rollback release did not recover successfully' >&2
+                show_diagnostics
+              fi
             else
-              echo 'No recorded previous release is available for rollback' >&2
+              echo 'No verified previous release is available for rollback' >&2
             fi
           }
 
           if ! sudo -n /usr/bin/systemctl restart baby-growth-desk.service; then
+            show_diagnostics
             rollback
             exit 1
           fi
-          if ! systemctl is-active --quiet baby-growth-desk.service; then
-            rollback
-            exit 1
-          fi
-          if ! curl --fail --silent --show-error --max-time 20 \
-            "http://127.0.0.1:${app_port}${app_base_path}/" | grep -q '糖糖成长工作台'; then
+          if ! wait_for_app; then
+            show_diagnostics
             rollback
             exit 1
           fi
 
-          if [[ -n "$previous" ]]; then
-            printf '%s\n' "$previous" > "$deploy_path/known-good-release"
+          if [[ -n "$rollback_target" ]]; then
+            printf '%s\n' "$rollback_target" > "$known_good_file"
           else
-            : > "$deploy_path/known-good-release"
+            : > "$known_good_file"
           fi
           rm -- "$archive"
 
           current=$(readlink -f "$current_link")
           while IFS= read -r -d '' candidate; do
-            if [[ "$candidate" != "$current" && "$candidate" != "$previous" ]]; then
+            if [[ "$candidate" != "$current" && "$candidate" != "$rollback_target" ]]; then
               case "$candidate" in
                 "$deploy_path/releases/"*) rm -rf -- "$candidate" ;;
                 *) echo 'Refusing to remove a path outside releases' >&2; exit 1 ;;
