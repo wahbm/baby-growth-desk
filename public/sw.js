@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "tangtang-workbench-";
-const CACHE_NAME = CACHE_PREFIX + "v9";
+const CACHE_NAME = CACHE_PREFIX + "v10";
 const ROOT_URL = self.registration.scope;
 const scopedUrl = (path) => new URL(path.replace(/^\/+/, ""), ROOT_URL).href;
 const CORE_URLS = [ROOT_URL, scopedUrl("manifest.webmanifest"), scopedUrl("tangtang-avatar.png")];
@@ -48,6 +48,7 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  if (url.pathname.includes("/api/")) return;
 
   if (request.mode === "navigate") {
     event.respondWith((async () => {

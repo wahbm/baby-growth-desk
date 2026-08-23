@@ -1,34 +1,15 @@
 "use client";
 
-import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ApiRequestError, apiRequest } from "./lib/api-client";
 import { basePath, withBasePath } from "./lib/base-path";
+import { parseDeskData, type DeskData, type HealthRecord, type StudyCategory, type StudyRecord } from "./lib/records";
 
 type Section = "study" | "health";
-type StudyCategory = "学校课程" | "课外辅导" | "兴趣班";
-type StudyRecord = {
-  id: string;
-  category: StudyCategory;
-  course: string;
-  date: string;
-  start: string;
-  end: string;
-  location: string;
-  homework: string;
-  done: boolean;
-};
-type HealthRecord = {
-  id: string;
-  condition: string;
-  hospital: string;
-  visitAt: string;
-  treatment: string;
-  followUp: string;
-  result: string;
-};
-type DeskData = { study: StudyRecord[]; health: HealthRecord[] };
 type Editor = { kind: Section; id?: string } | null;
 
-const STORAGE_KEY = "tangtang-local-desk-v1";
+const LEGACY_STORAGE_KEY = "tangtang-local-desk-v1";
+const emptyData: DeskData = { study: [], health: [] };
 const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 
 function localDateKey(date = new Date()) {
@@ -62,19 +43,6 @@ function makeId(prefix: string) {
   return prefix + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7);
 }
 
-function seedData(today: string): DeskData {
-  return {
-    study: [
-      { id: "seed-reading", category: "学校课程", course: "语文 · 暑假阅读", date: today, start: "09:00", end: "09:40", location: "家里", homework: "把最喜欢的一段读给爸爸妈妈听", done: true },
-      { id: "seed-math", category: "课外辅导", course: "思维数学", date: today, start: "10:30", end: "11:30", location: "社区学习中心", homework: "完成练习册第 8 页", done: false },
-      { id: "seed-dance", category: "兴趣班", course: "舞蹈基础班", date: today, start: "16:30", end: "17:30", location: "星星舞蹈教室", homework: "压腿 10 分钟，复习上节课动作", done: false },
-    ],
-    health: [
-      { id: "seed-dental", condition: "牙齿常规检查", hospital: "上海市儿童医院", visitAt: moveDate(today, -9) + "T14:30", treatment: "继续认真刷牙，使用儿童牙线", followUp: moveDate(today, 82) + "T14:30", result: "情况良好，没有发现龋齿" },
-    ],
-  };
-}
-
 function valueOf(form: FormData, key: string) {
   return String(form.get(key) || "").trim();
 }
@@ -95,25 +63,46 @@ export default function Home() {
   const [section, setSection] = useState<Section>("study");
   const [selectedDate, setSelectedDate] = useState(today);
   const [healthDayOnly, setHealthDayOnly] = useState(false);
-  const [data, setData] = useState<DeskData>(() => seedData(today));
+  const [data, setData] = useState<DeskData>(emptyData);
   const [ready, setReady] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [needsLogin, setNeedsLogin] = useState(false);
   const [editor, setEditor] = useState<Editor>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [notice, setNotice] = useState("");
 
-  useEffect(() => {
+  const handleApiError = useCallback((error: unknown) => {
+    if (error instanceof ApiRequestError && error.status === 401) setNeedsLogin(true);
+    setNotice(error instanceof Error ? error.message : "请求失败，请稍后重试");
+  }, []);
+
+  const loadRecords = useCallback(async () => {
+    setReady(false);
     try {
-      const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved) as DeskData;
-        if (Array.isArray(parsed.study) && Array.isArray(parsed.health)) setData(parsed);
+      let next = await apiRequest<DeskData>("/api/records");
+      const legacy = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (legacy) {
+        const parsed = JSON.parse(legacy) as { data?: unknown };
+        const oldData = parseDeskData(parsed.data || parsed);
+        if (oldData.study.length || oldData.health.length) {
+          next = await apiRequest<DeskData>("/api/records", { method: "POST", body: JSON.stringify(oldData) });
+          setNotice("本机旧记录已迁移到数据库");
+        }
+        window.localStorage.removeItem(LEGACY_STORAGE_KEY);
       }
-    } catch {
-      setNotice("本地记录读取失败，已先打开示例内容。");
+      setData(next);
+      setNeedsLogin(false);
+    } catch (error) {
+      handleApiError(error);
     } finally {
       setReady(true);
     }
-  }, []);
+  }, [handleApiError]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadRecords(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadRecords]);
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
@@ -121,15 +110,6 @@ export default function Home() {
       setNotice("离线功能暂未启用，请保持网络后重新打开一次。");
     });
   }, []);
-
-  useEffect(() => {
-    if (!ready) return;
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    } catch {
-      setNotice("当前浏览器无法继续保存，请先导出备份。");
-    }
-  }, [data, ready]);
 
   useEffect(() => {
     if (!notice) return;
@@ -166,7 +146,7 @@ export default function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const saveStudy = (event: FormEvent<HTMLFormElement>) => {
+  const saveStudy = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const next: StudyRecord = {
@@ -180,14 +160,25 @@ export default function Home() {
       homework: valueOf(form, "homework"),
       done: editingStudy?.done || false,
     };
-    setData((current) => ({ ...current, study: editingStudy ? current.study.map((item) => item.id === editingStudy.id ? next : item) : [...current.study, next] }));
-    setSelectedDate(next.date);
-    setSection("study");
-    setEditor(null);
-    setNotice(editingStudy ? "学习记录已更新" : "学习记录已保存到本机");
+    setBusy(true);
+    try {
+      const saved = await apiRequest<StudyRecord>(editingStudy ? `/api/study-records/${encodeURIComponent(next.id)}` : "/api/study-records", {
+        method: editingStudy ? "PUT" : "POST",
+        body: JSON.stringify(next),
+      });
+      setData((current) => ({ ...current, study: editingStudy ? current.study.map((item) => item.id === saved.id ? saved : item) : [...current.study, saved] }));
+      setSelectedDate(saved.date);
+      setSection("study");
+      setEditor(null);
+      setNotice(editingStudy ? "学习记录已更新" : "学习记录已保存到数据库");
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const saveHealth = (event: FormEvent<HTMLFormElement>) => {
+  const saveHealth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const next: HealthRecord = {
@@ -199,29 +190,104 @@ export default function Home() {
       followUp: valueOf(form, "followUp"),
       result: valueOf(form, "result"),
     };
-    setData((current) => ({ ...current, health: editingHealth ? current.health.map((item) => item.id === editingHealth.id ? next : item) : [...current.health, next] }));
-    setSection("health");
-    setHealthDayOnly(false);
-    setEditor(null);
-    setNotice(editingHealth ? "健康记录已更新" : "健康记录已保存到本机");
+    setBusy(true);
+    try {
+      const saved = await apiRequest<HealthRecord>(editingHealth ? `/api/health-records/${encodeURIComponent(next.id)}` : "/api/health-records", {
+        method: editingHealth ? "PUT" : "POST",
+        body: JSON.stringify(next),
+      });
+      setData((current) => ({ ...current, health: editingHealth ? current.health.map((item) => item.id === saved.id ? saved : item) : [...current.health, saved] }));
+      setSection("health");
+      setHealthDayOnly(false);
+      setEditor(null);
+      setNotice(editingHealth ? "健康记录已更新" : "健康记录已保存到数据库");
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const removeStudy = (id: string) => {
+  const toggleStudy = async (record: StudyRecord) => {
+    const next = { ...record, done: !record.done };
+    setBusy(true);
+    try {
+      const saved = await apiRequest<StudyRecord>(`/api/study-records/${encodeURIComponent(record.id)}`, { method: "PUT", body: JSON.stringify(next) });
+      setData((current) => ({ ...current, study: current.study.map((item) => item.id === saved.id ? saved : item) }));
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeStudy = async (id: string) => {
     if (!window.confirm("确定删除这条学习记录吗？")) return;
-    setData((current) => ({ ...current, study: current.study.filter((item) => item.id !== id) }));
-    setNotice("学习记录已删除");
+    setBusy(true);
+    try {
+      await apiRequest(`/api/study-records/${encodeURIComponent(id)}`, { method: "DELETE" });
+      setData((current) => ({ ...current, study: current.study.filter((item) => item.id !== id) }));
+      setNotice("学习记录已删除");
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const removeHealth = (id: string) => {
+  const removeHealth = async (id: string) => {
     if (!window.confirm("确定删除这条健康记录吗？")) return;
-    setData((current) => ({ ...current, health: current.health.filter((item) => item.id !== id) }));
-    setNotice("健康记录已删除");
+    setBusy(true);
+    try {
+      await apiRequest(`/api/health-records/${encodeURIComponent(id)}`, { method: "DELETE" });
+      setData((current) => ({ ...current, health: current.health.filter((item) => item.id !== id) }));
+      setNotice("健康记录已删除");
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const importRecords = async (next: DeskData) => {
+    setBusy(true);
+    try {
+      const saved = await apiRequest<DeskData>("/api/records", { method: "PUT", body: JSON.stringify(next) });
+      setData(saved);
+      setSettingsOpen(false);
+      setNotice("备份已导入数据库");
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clearRecords = async () => {
+    setBusy(true);
+    try {
+      const saved = await apiRequest<DeskData>("/api/records", { method: "DELETE" });
+      setData(saved);
+      setSettingsOpen(false);
+      setNotice("数据库记录已清空");
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const logout = async () => {
+    await apiRequest("/api/session", { method: "DELETE" }).catch(() => undefined);
+    setData(emptyData);
+    setSettingsOpen(false);
+    setNeedsLogin(true);
   };
 
   const selectedLabel = parseDate(selectedDate).toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" });
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" aria-busy={!ready || busy}>
       <header className="profile-bar">
         <img src={withBasePath("/tangtang-avatar.png")} alt="糖糖的插画头像" />
         <div>
@@ -264,7 +330,7 @@ export default function Home() {
           <div className="section-title"><h2>课程与作业</h2><button type="button" onClick={() => setEditor({ kind: "study" })}>＋ 新增</button></div>
           {dayStudy.length ? dayStudy.map((item) => (
             <article className={"record-card " + categoryClass(item.category) + (item.done ? " done" : "")} key={item.id}>
-              <button type="button" className="complete-button" aria-label={item.done ? "标记为未完成" : "标记为已完成"} onClick={() => setData((current) => ({ ...current, study: current.study.map((record) => record.id === item.id ? { ...record, done: !record.done } : record) }))}>{item.done ? "✓" : ""}</button>
+              <button type="button" disabled={busy} className="complete-button" aria-label={item.done ? "标记为未完成" : "标记为已完成"} onClick={() => void toggleStudy(item)}>{item.done ? "✓" : ""}</button>
               <div className="record-copy">
                 <div className="record-meta"><span className="badge">{item.category}</span><time>{item.start}{item.end ? "–" + item.end : ""}</time></div>
                 <h3>{item.course}</h3>
@@ -323,7 +389,7 @@ export default function Home() {
             <div className="form-row"><label>日期<input name="date" type="date" required defaultValue={editingStudy?.date || selectedDate} /></label><label>地点<input name="location" defaultValue={editingStudy?.location || ""} placeholder="可不填" /></label></div>
             <div className="form-row"><label>开始时间<input name="start" type="time" required defaultValue={editingStudy?.start || "09:00"} /></label><label>结束时间<input name="end" type="time" defaultValue={editingStudy?.end || ""} /></label></div>
             <label>作业内容<textarea name="homework" defaultValue={editingStudy?.homework || ""} placeholder="例如：口算 20 题、练琴 15 分钟" /></label>
-            <div className="form-actions"><button type="button" onClick={() => setEditor(null)}>取消</button><button type="submit" className="save-button">保存到本机</button></div>
+            <div className="form-actions"><button type="button" onClick={() => setEditor(null)}>取消</button><button type="submit" disabled={busy} className="save-button">{busy ? "正在保存…" : "保存到数据库"}</button></div>
           </form>
         </Sheet>
       )}
@@ -337,12 +403,13 @@ export default function Home() {
             <label>治疗方案<textarea name="treatment" defaultValue={editingHealth?.treatment || ""} placeholder="例如：遵医嘱用药、居家休息" /></label>
             <label>复诊时间<input name="followUp" type="datetime-local" defaultValue={editingHealth?.followUp || ""} /></label>
             <label>治疗效果<textarea name="result" defaultValue={editingHealth?.result || ""} placeholder="例如：已退烧，精神状态良好" /></label>
-            <div className="form-actions"><button type="button" onClick={() => setEditor(null)}>取消</button><button type="submit" className="save-button">保存到本机</button></div>
+            <div className="form-actions"><button type="button" onClick={() => setEditor(null)}>取消</button><button type="submit" disabled={busy} className="save-button">{busy ? "正在保存…" : "保存到数据库"}</button></div>
           </form>
         </Sheet>
       )}
 
-      {settingsOpen && <Settings data={data} onImport={(next) => { setData(next); setSettingsOpen(false); setNotice("备份已导入"); }} onClear={() => { setData({ study: [], health: [] }); setSettingsOpen(false); setNotice("本机记录已清空"); }} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <Settings data={data} onImport={importRecords} onClear={clearRecords} onLogout={logout} onClose={() => setSettingsOpen(false)} />}
+      {needsLogin && <AccessLogin onSuccess={loadRecords} />}
     </main>
   );
 }
@@ -360,7 +427,7 @@ function Sheet({ title, onClose, children }: { title: string; onClose: () => voi
   return <div className="sheet-backdrop" onMouseDown={onClose}><section className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" onMouseDown={(event) => event.stopPropagation()}><header><div><p>糖糖成长记录</p><h2 id="sheet-title">{title}</h2></div><button type="button" aria-label="关闭" onClick={onClose}>×</button></header>{children}</section></div>;
 }
 
-function Settings({ data, onImport, onClear, onClose }: { data: DeskData; onImport: (data: DeskData) => void; onClear: () => void; onClose: () => void }) {
+function Settings({ data, onImport, onClear, onLogout, onClose }: { data: DeskData; onImport: (data: DeskData) => Promise<void>; onClear: () => Promise<void>; onLogout: () => Promise<void>; onClose: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
   const exportData = () => {
@@ -375,12 +442,10 @@ function Settings({ data, onImport, onClear, onClose }: { data: DeskData; onImpo
   const importData = (file?: File) => {
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const parsed = JSON.parse(String(reader.result));
-        const next = (parsed.data || parsed) as DeskData;
-        if (!Array.isArray(next.study) || !Array.isArray(next.health)) throw new Error();
-        onImport(next);
+        await onImport(parseDeskData(parsed.data || parsed));
       } catch {
         setError("这个文件不是有效的糖糖工作台备份。");
       }
@@ -388,18 +453,50 @@ function Settings({ data, onImport, onClear, onClose }: { data: DeskData; onImpo
     reader.readAsText(file);
   };
   const clearAll = () => {
-    if (window.confirm("确定清空全部学习和健康记录吗？建议先导出备份。")) onClear();
+    if (window.confirm("确定清空数据库中的全部学习和健康记录吗？建议先导出备份。")) void onClear();
   };
   return (
-    <Sheet title="本机数据与备份" onClose={onClose}>
-      <section className="local-note"><span>⌁</span><div><b>无需登录，可安装后离线使用</b><p>记录只保存在当前设备。首次联网打开后，在 Safari 中选择“添加到主屏幕”，以后换网络或没有网络也能打开；清理网站数据或更换手机前，请先导出备份。</p></div></section>
+    <Sheet title="数据库与备份" onClose={onClose}>
+      <section className="local-note"><span>⌁</span><div><b>记录已保存到家庭数据库</b><p>登录后可从不同设备读取同一份记录。新增、修改和删除需要联网；导出的 JSON 文件可用于人工备份和恢复。</p></div></section>
       <div className="settings-list">
         <button type="button" onClick={exportData}><span>⇩</span><div><b>导出备份</b><small>{data.study.length} 条学习记录 · {data.health.length} 条健康记录</small></div><i>›</i></button>
         <button type="button" onClick={() => inputRef.current?.click()}><span>⇧</span><div><b>导入备份</b><small>从之前导出的 JSON 文件恢复</small></div><i>›</i></button>
         <input ref={inputRef} hidden type="file" accept=".json,application/json" onChange={(event) => importData(event.target.files?.[0])} />
         <button type="button" className="clear-button" onClick={clearAll}><span>×</span><div><b>清空全部记录</b><small>此操作不能撤销</small></div><i>›</i></button>
+        <button type="button" onClick={() => void onLogout()}><span>↪</span><div><b>退出家庭工作台</b><small>下次打开需要重新输入访问口令</small></div><i>›</i></button>
       </div>
       {error && <p className="settings-error">{error}</p>}
     </Sheet>
+  );
+}
+
+function AccessLogin({ onSuccess }: { onSuccess: () => Promise<void> }) {
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const login = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      await apiRequest("/api/session", { method: "POST", body: JSON.stringify({ token: valueOf(form, "token") }) });
+      await onSuccess();
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : "登录失败，请稍后重试");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  return (
+    <div className="sheet-backdrop">
+      <section className="sheet" role="dialog" aria-modal="true" aria-labelledby="login-title">
+        <header><div><p>糖糖成长记录</p><h2 id="login-title">进入家庭工作台</h2></div></header>
+        <form onSubmit={login}>
+          <label>家庭访问口令<input name="token" type="password" autoComplete="current-password" required autoFocus placeholder="请输入服务端配置的访问口令" /></label>
+          {error && <p className="settings-error">{error}</p>}
+          <div className="form-actions"><button type="submit" disabled={submitting} className="save-button">{submitting ? "正在验证…" : "进入工作台"}</button></div>
+        </form>
+      </section>
+    </div>
   );
 }

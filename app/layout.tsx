@@ -11,10 +11,10 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     metadataBase,
     title: "糖糖成长工作台",
-    description: "在本机记录糖糖的学习安排、作业和健康情况。",
+    description: "安全记录糖糖的学习安排、作业和健康情况。",
     manifest: withBasePath("/manifest.webmanifest"),
     icons: { icon: withBasePath("/tangtang-avatar.png"), apple: withBasePath("/tangtang-avatar.png") },
-    openGraph: { title: "糖糖成长工作台", description: "学习有计划，健康有记录。数据只保存在当前设备。", images: [{ url: withBasePath("/og.png"), width: 1696, height: 932 }] },
+    openGraph: { title: "糖糖成长工作台", description: "学习有计划，健康有记录。登录后跨设备同步。", images: [{ url: withBasePath("/og.png"), width: 1696, height: 932 }] },
     twitter: { card: "summary_large_image", title: "糖糖成长工作台", description: "学习有计划，健康有记录。", images: [withBasePath("/og.png")] },
   };
 }
