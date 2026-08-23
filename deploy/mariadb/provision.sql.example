@@ -1,0 +1,13 @@
+-- Run as a MariaDB administrator after replacing the password locally.
+-- Never commit or paste the real password into chat.
+CREATE DATABASE IF NOT EXISTS baby_growth_desk
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE USER IF NOT EXISTS 'baby_growth_desk_app'@'127.0.0.1'
+  IDENTIFIED BY 'replace-on-server-only';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX
+  ON baby_growth_desk.* TO 'baby_growth_desk_app'@'127.0.0.1';
+FLUSH PRIVILEGES;
+
+USE baby_growth_desk;
+SOURCE /absolute/path/to/deploy/mariadb/schema.sql;

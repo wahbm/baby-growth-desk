@@ -48,6 +48,7 @@ jobs:
           test -s dist/standalone/dist/server/index.js
           test -d dist/standalone/dist/client
           test -d dist/standalone/node_modules/vinext
+          grep -q 'mysql2' dist/standalone/dist/server/index.js
 
       - name: Package production bundle
         if: github.event_name != 'pull_request'
@@ -176,7 +177,10 @@ jobs:
             systemctl is-active --quiet baby-growth-desk.service || return 1
             response=$(curl --fail --silent --max-time 5 \
               "http://127.0.0.1:${app_port}${app_base_path}/" 2>/dev/null) || return 1
-            grep -q '糖糖成长工作台' <<< "$response"
+            grep -q '糖糖成长工作台' <<< "$response" || return 1
+            curl --fail --silent --max-time 5 \
+              "http://127.0.0.1:${app_port}${app_base_path}/api/health" \
+              | grep -q '"database":"mariadb"'
           }
 
           wait_for_app() {
@@ -300,6 +304,8 @@ jobs:
           set -Eeuo pipefail
           curl --fail --silent --show-error --max-time 20 \
             "http://$DEPLOY_HOST$APP_BASE_PATH/" | grep -q '糖糖成长工作台'
+          curl --fail --silent --show-error --max-time 20 \
+            "http://$DEPLOY_HOST$APP_BASE_PATH/api/health" | grep -q '"database":"mariadb"'
 
       - name: Remove temporary key
         if: always()

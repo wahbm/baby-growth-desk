@@ -1,5 +1,13 @@
 {
   "version": "7",
-  "dialect": "sqlite",
-  "entries": []
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1787397420171,
+      "tag": "0000_burly_sersi",
+      "breakpoints": true
+    }
+  ]
 }

@@ -1,6 +1,6 @@
 [Unit]
 Description=Baby Growth Desk Vinext service
-After=network-online.target
+After=network-online.target mariadb.service
 Wants=network-online.target
 
 [Service]
@@ -18,8 +18,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-MemoryHigh=192M
-MemoryMax=256M
+MemoryHigh=224M
+MemoryMax=288M
 UMask=0077
 
 [Install]
