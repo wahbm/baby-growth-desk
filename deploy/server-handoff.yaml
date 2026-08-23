@@ -27,7 +27,7 @@ deployment_handoff:
       network: "127.0.0.1:3306 only; never expose through the security group or Nginx"
       schema: "deploy/mariadb/schema.sql; also initialized idempotently by the application"
       migration_safety: "legacy localStorage JSON is merged by stable record ID after login and removed only after commit; do not clear browser data before verification"
-      backup: "not configured; obtain the user's backup decision before production cutover"
+      backup: "declined by the user on 2026-08-24; this production cutover has no configured database recovery point"
   required_actions:
     - "Create /var/www/liangliang-developer/baby-growth-desk/{incoming,releases} owned by deploy:deploy; keep the project root owned by deploy:deploy."
     - "Verify the user-created shared MariaDB database, utf8mb4 schema, local-only project user, and localhost-only listener; measure RAM and swap before and after this project is enabled."
@@ -36,7 +36,7 @@ deployment_handoff:
     - "Validate deploy/sudoers/baby-growth-desk-deploy with visudo, then install it as /etc/sudoers.d/baby-growth-desk-deploy with mode 0440."
     - "Install deploy/nginx/baby-growth-desk-location.conf as /etc/nginx/snippets/baby-growth-desk-location.conf and add one exact include inside the existing HTTP server block for 8.130.116.192."
     - "Run nginx -t immediately before reload; reload only on success. Preserve every unrelated route and service."
-    - "Choose and document whether MariaDB backups are required before migrating durable browser data. No scheduled backup is created by this repository."
+    - "Record that the user approved direct deployment without MariaDB backups on 2026-08-24; do not create a scheduled backup implicitly."
     - "Set repository variable DEPLOY_ENABLED to true only after the directory, MariaDB, protected environment file, systemd unit, narrow sudo rule, and Nginx include are ready, then run the Deploy ECS workflow."
   verification:
     - "Confirm the workflow commit matches main and that PR events build without deploying."
