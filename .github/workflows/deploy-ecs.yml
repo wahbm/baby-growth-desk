@@ -313,6 +313,70 @@ jobs:
             "http://$DEPLOY_HOST$APP_BASE_PATH/api/health"
           grep -q '"database":"mariadb"' "$health_response"
 
+      - name: Report release and resource headroom
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh \
+            -i "$HOME/.ssh/deploy_key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -p "$DEPLOY_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            bash -se -- "$DEPLOY_PATH" "$APP_PORT" "$APP_BASE_PATH" <<'REMOTE'
+          set -Eeuo pipefail
+          deploy_path=$1
+          app_port=$2
+          app_base_path=$3
+          current=$(readlink -f "$deploy_path/current")
+          case "$current" in
+            "$deploy_path/releases/"*) test -d "$current" ;;
+            *) echo 'Current release is outside the project release directory' >&2; exit 1 ;;
+          esac
+
+          systemctl is-active --quiet baby-growth-desk.service
+          health_body=$(curl --fail --silent --max-time 5 \
+            "http://127.0.0.1:${app_port}${app_base_path}/api/health")
+          grep -q '"database":"mariadb"' <<< "$health_body"
+          records_status=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 5 \
+            "http://127.0.0.1:${app_port}${app_base_path}/api/records")
+          test "$records_status" = 401
+
+          mapfile -d '' releases < <(find "$deploy_path/releases" -mindepth 1 -maxdepth 1 -type d -print0)
+          test "${#releases[@]}" -le 2
+          known_good=none
+          if [[ -s "$deploy_path/known-good-release" ]]; then
+            IFS= read -r known_good < "$deploy_path/known-good-release"
+            case "$known_good" in
+              "$deploy_path/releases/"*) test -d "$known_good" ;;
+              *) echo 'Known-good release is outside the project release directory' >&2; exit 1 ;;
+            esac
+          fi
+
+          app_listeners=$(ss -ltnH 'sport = :3101')
+          grep -q '127.0.0.1:3101' <<< "$app_listeners"
+          mariadb_listeners=$(ss -ltnH 'sport = :3306')
+          grep -q '127.0.0.1:3306' <<< "$mariadb_listeners"
+          unexpected_mariadb=$(grep -Ev '127\.0\.0\.1:3306|\[::1\]:3306' <<< "$mariadb_listeners" || true)
+          test -z "$unexpected_mariadb"
+
+          echo "current_release=$(basename "$current")"
+          if [[ "$known_good" = none ]]; then
+            echo 'known_good_release=none'
+          else
+            echo "known_good_release=$(basename "$known_good")"
+          fi
+          echo "release_count=${#releases[@]}"
+          systemctl show baby-growth-desk.service -p ActiveState -p SubState -p MemoryCurrent --no-pager
+          free -m
+          df -m "$deploy_path"
+          printf 'app_listener=%s\n' "$app_listeners"
+          printf 'mariadb_listener=%s\n' "$mariadb_listeners"
+          echo "unauthenticated_records_status=$records_status"
+          REMOTE
+
       - name: Remove temporary key
         if: always()
         shell: bash
