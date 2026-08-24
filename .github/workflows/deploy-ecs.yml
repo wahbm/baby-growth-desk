@@ -302,10 +302,16 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          root_response="$RUNNER_TEMP/baby-growth-desk-root.html"
+          health_response="$RUNNER_TEMP/baby-growth-desk-health.json"
           curl --fail --silent --show-error --max-time 20 \
-            "http://$DEPLOY_HOST$APP_BASE_PATH/" | grep -q '糖糖成长工作台'
+            --output "$root_response" \
+            "http://$DEPLOY_HOST$APP_BASE_PATH/"
+          grep -q '糖糖成长工作台' "$root_response"
           curl --fail --silent --show-error --max-time 20 \
-            "http://$DEPLOY_HOST$APP_BASE_PATH/api/health" | grep -q '"database":"mariadb"'
+            --output "$health_response" \
+            "http://$DEPLOY_HOST$APP_BASE_PATH/api/health"
+          grep -q '"database":"mariadb"' "$health_response"
 
       - name: Remove temporary key
         if: always()
